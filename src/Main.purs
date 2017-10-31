@@ -21,7 +21,10 @@ import Partial.Unsafe (unsafePartial)
 import Prelude
 import Data.StrMap as M
 import Data.Traversable (sequence)
+import Data.List as List
 
+import Token (Token)
+import Token as Token
 
 data FunDef = FunDef String (List String) (List Stmt)
 
@@ -52,41 +55,6 @@ instance showStmt :: Show Stmt where
   show (VarDecl id expr) = "Variable decl " <> id <> " " <> (show expr)
   show (ReturnStmt expr) = "Return " <> (show expr)
 
-data Token = Assign
-           | Comma
-           | Def
-           | Div
-           | Ident String
-           | KwLet
-           | LeftBrace
-           | LeftPar
-           | Minus
-           | Mul
-           | Number Int
-           | Plus
-           | RightBrace
-           | RightPar
-           | Semi
-           | Return
-
-
-instance showToken :: Show Token where
-  show (Ident s) = "Ident " <> s
-  show (Number n) = "Number " <> (show n)
-  show Assign = "="
-  show Comma = "Comma"
-  show Def = "Def"
-  show Div = "div"
-  show KwLet = "let"
-  show LeftBrace = "LeftBrace"
-  show LeftPar = "LeftPar"
-  show Minus = "-"
-  show Mul = "mul"
-  show Plus = "+"
-  show RightBrace = "RightBrace"
-  show RightPar = "RightPar"
-  show Semi = "Semi"
-  show Return = "Return"
   
 isLetter :: Char -> Boolean
 isLetter c =
@@ -104,17 +72,17 @@ isLetterOrDigit :: Char -> Boolean
 isLetterOrDigit c = (isDigit c) || (isLetter c)
 
 tok :: Char -> Maybe Token
-tok '(' = Just LeftPar
-tok ')' = Just RightPar
-tok '{' = Just LeftBrace
-tok '}' = Just RightBrace
-tok '+' = Just Plus
-tok '-' = Just Minus
-tok '*' = Just Mul
-tok '/' = Just Div
-tok '=' = Just Assign
-tok ';' = Just Semi
-tok ',' = Just Comma 
+tok '(' = Just Token.LeftPar
+tok ')' = Just Token.RightPar
+tok '{' = Just Token.LeftBrace
+tok '}' = Just Token.RightBrace
+tok '+' = Just Token.Plus
+tok '-' = Just Token.Minus
+tok '*' = Just Token.Mul
+tok '/' = Just Token.Div
+tok '=' = Just Token.Assign
+tok ';' = Just Token.Semi
+tok ',' = Just Token.Comma 
 tok _ = Nothing
 
 tokenize :: String -> List Token
@@ -137,15 +105,15 @@ tokenize xs =
               case fromString $ takeWhile isDigit xs of
                 Nothing -> empty
                 Just n ->
-                  Cons (Number n) (tokenize (dropWhile isDigit xs))
+                  Cons (Token.Number n) (tokenize (dropWhile isDigit xs))
             _ -> empty
           where 
             newToken =
               case takeWhile isLetterOrDigit xs of
-                "let" -> KwLet
-                "def" -> Def
-                "return" -> Return
-                x -> Ident x
+                "let" -> Token.KwLet
+                "def" -> Token.Def
+                "return" -> Token.Return
+                x -> Token.Ident x
 
 parseFunDefList :: List Token
                    -> Either String (Tuple (List FunDef) (List Token))
@@ -154,7 +122,7 @@ parseFunDefList xs = p xs Nil
     p :: List Token
          -> List FunDef
          -> Either String (Tuple (List FunDef) (List Token))
-    p xs@(Def : _) ys =
+    p xs@(Token.Def : _) ys =
       case parseFunDef xs of
         Left e -> Left e
         Right (Tuple funDef restTokens) ->
@@ -164,13 +132,13 @@ parseFunDefList xs = p xs Nil
 
 parseFunDef :: List Token
                -> Either String (Tuple FunDef (List Token))
-parseFunDef (Def : (Ident id) : LeftPar : xs) =
+parseFunDef (Token.Def : (Token.Ident id) : Token.LeftPar : xs) =
   case parseParamList xs of
     Left err -> Left err
-    Right (Tuple ids (RightPar : LeftBrace : restTokens)) ->
+    Right (Tuple ids (Token.RightPar : Token.LeftBrace : restTokens)) ->
       case parseStmtList restTokens of
         Left e -> Left e
-        Right (Tuple stmts (RightBrace : restTokens)) ->
+        Right (Tuple stmts (Token.RightBrace : restTokens)) ->
           Right (Tuple (FunDef id ids stmts) restTokens)
         Right _ ->
           Left "expected a closing brace at the end of function body"
@@ -189,12 +157,12 @@ foldExprs op _ = Nothing
 
 parseParamList :: List Token
                -> Either String (Tuple (List String) (List Token))
-parseParamList ((Ident id) : xs) = Right (p xs (id : Nil))
+parseParamList ((Token.Ident id) : xs) = Right (p xs (id : Nil))
   where
     p :: List Token
          -> List String
          -> Tuple (List String) (List Token)
-    p (Comma : (Ident id) : xs) ys =
+    p (Token.Comma : (Token.Ident id) : xs) ys =
       p xs (id : ys)
     p xs ys = Tuple (reverse ys) xs
       
@@ -202,7 +170,7 @@ parseParamList xs = Right (Tuple Nil xs)
 
 
 s :: List Token -> Either String (Tuple (Maybe Expr) (List Token))
-s (Plus:xs) =
+s (Token.Plus:xs) =
   case parseTerm xs of
     Right (Tuple expr tokens) ->
       Right (Tuple (Just expr) tokens)
@@ -223,26 +191,26 @@ parseList f xs exprs =
       Left err
 
 parseStmt :: List Token -> Either String (Tuple Stmt (List Token))
-parseStmt (KwLet : (Ident id) : Assign : xs) =
+parseStmt (Token.KwLet : (Token.Ident id) : Token.Assign : xs) =
   case parseExpr xs of
-    Right (Tuple expr (Semi : restTokens)) ->
+    Right (Tuple expr (Token.Semi : restTokens)) ->
       Right (Tuple (VarDecl id expr) restTokens)
     Right (Tuple expr _) ->
       Left "expected a semicolon after expression"
     Left err -> Left err
     
-parseStmt ((Ident id) : Assign : xs) =
+parseStmt ((Token.Ident id) : Token.Assign : xs) =
   case parseExpr xs of
-    Right (Tuple expr (Semi : restTokens)) ->
+    Right (Tuple expr (Token.Semi : restTokens)) ->
       Right (Tuple (Assignment id expr) restTokens)
     Right (Tuple expr _) ->
       Left "expected a semicolon"
     Left err -> Left err
 
-parseStmt (Return : xs) =
+parseStmt (Token.Return : xs) =
   case parseExpr xs of
     Left e -> Left e
-    Right (Tuple expr (Semi : restTokens)) ->
+    Right (Tuple expr (Token.Semi : restTokens)) ->
       Right (Tuple (ReturnStmt expr) restTokens)
     _ ->
       Left "expecting a semicolon after return statement"
@@ -259,17 +227,17 @@ parseStmtList xs = p xs Nil
             -> Either String (Tuple (List Stmt) (List Token))
     p xs ys =
       case xs of
-        (Ident _) : _ ->
+        (Token.Ident _) : _ ->
           case parseStmt xs of
             Right (Tuple stmt restTokens) ->
               p restTokens (stmt : ys)
             Left e -> Left e
-        Return : _ ->
+        Token.Return : _ ->
           case parseStmt xs of
             Right (Tuple stmt restTokens) ->
               p restTokens (stmt : ys)
             Left e -> Left e
-        KwLet : _ ->
+        Token.KwLet : _ ->
           case parseStmt xs of
             Right (Tuple stmt restTokens) ->
               p restTokens (stmt : ys)
@@ -283,8 +251,8 @@ parseStmtList xs = p xs Nil
 parseExpr :: List Token -> Either String (Tuple Expr (List Token))
 parseExpr xs =
   case parseTerm xs of
-    Right (Tuple lExpr (Plus:restTokens)) ->
-      case parseList s (Plus:restTokens) Nil of
+    Right (Tuple lExpr (Token.Plus : restTokens)) ->
+      case parseList s (Token.Plus : restTokens) Nil of
         Left e -> Left e
         Right (Tuple exprs tokens) ->
           case foldExprs OpAdd (lExpr:exprs) of
@@ -307,7 +275,7 @@ parseArgList xs =
 
 parseCommaExpr :: List Token
                -> Either String (Tuple (Maybe Expr) (List Token))
-parseCommaExpr (Comma : xs) =
+parseCommaExpr (Token.Comma : xs) =
   case parseExpr xs of
     Left err -> Left err
     Right (Tuple expr restTokens) ->
@@ -320,9 +288,9 @@ parseTerm :: List Token -> Either String (Tuple Expr (List Token))
 parseTerm xs =
   case parseFactor xs of
     Left err -> Left err
-    Right (Tuple expr (Mul : tokens)) ->
+    Right (Tuple expr (Token.Mul : tokens)) ->
 
-      case (p (Mul : tokens)) of
+      case (p (Token.Mul : tokens)) of
         Left err -> Left err
         Right (Tuple (Just rExpr) tokens) ->
           Right (Tuple (BinExpr expr OpMul rExpr) tokens)
@@ -334,7 +302,7 @@ parseTerm xs =
       
   where
     p :: List Token -> Either String (Tuple (Maybe Expr) (List Token))
-    p (Mul : xs) =
+    p (Token.Mul : xs) =
       case parseFactor xs of
         Left err -> Left err
         Right (Tuple lExpr restTokens) ->
@@ -351,22 +319,22 @@ parseTerm xs =
 
 
 parseFactor :: List Token -> Either String (Tuple Expr (List Token))
-parseFactor ((Number n) : xs) = Right (Tuple (ConstExpr n) xs)
-parseFactor ((Ident id) : LeftPar : RightPar : xs) =
+parseFactor ((Token.Number n) : xs) = Right (Tuple (ConstExpr n) xs)
+parseFactor ((Token.Ident id) : Token.LeftPar : Token.RightPar : xs) =
   Right (Tuple (FunCall id Nil) xs)
 
-parseFactor ((Ident id) : LeftPar : xs) =
+parseFactor ((Token.Ident id) : Token.LeftPar : xs) =
   case parseArgList xs of
-    Right (Tuple exprs (RightPar : restTokens)) ->
+    Right (Tuple exprs (Token.RightPar : restTokens)) ->
       Right (Tuple (FunCall id exprs) restTokens)
     Right (Tuple _ _) ->
       Left "expected a closing parenthesis after parameter list"
     Left err -> Left err
   
-parseFactor ((Ident id) : xs) = Right (Tuple (IdentExpr id) xs)
-parseFactor (LeftPar : xs) =
+parseFactor ((Token.Ident id) : xs) = Right (Tuple (IdentExpr id) xs)
+parseFactor (Token.LeftPar : xs) =
   case parseExpr xs of
-    Right (Tuple expr (RightPar : restTokens)) ->
+    Right (Tuple expr (Token.RightPar : restTokens)) ->
       Right (Tuple expr restTokens)
     Right (Tuple _ _) ->
       Left "expecting a closing parenthesis"
@@ -407,6 +375,8 @@ locToGas (Register r) =
     8 -> "%r13"
     9 -> "%r14"
     10 -> "%r15"
+    11 -> "%rdi"
+    12 -> "%rsi"
     _ -> "NO SUCH REGISTER"
 locToGas BasePointer = "%rbp"
 locToGas StackPointer = "%rsp"
@@ -454,9 +424,9 @@ generateExpr symTab dest _ (ConstExpr n) =
   Right ((InstrMove { source : Constant n, dest : dest }) : Nil)
 
 
+generateExpr symTab dest _ (FunCall id args) = Left "not yet implemented"
 
-generateExpr symTab _ _ _ = Left "not yet implemented"
-
+generateExpr symTab dest _ _ = Left "not yet implemented"
 
 data StmtRecord = StmtRecord (List Instruction) SymTab StackIdx
 
@@ -590,15 +560,24 @@ g f = g2 newStack Nil
       Right instructions
     
 
+paramToLoc :: Int -> Location
+paramToLoc 0 = Register 11  -- rdi
+paramToLoc 1 = Register 12 -- "rsi"
+paramToLoc 2 = Register 2 -- "rdx"
+paramToLoc 3 = Register 1 -- "rcx"
+paramToLoc 4 = Register 3 -- "r8"
+paramToLoc 5 = Register 9 --  "r9"
+paramToLoc _ = Register 9999999 -- use turn this into a maybe
+
 addParams :: List String -> SymTab -> SymTab
 addParams params symTab =
-  foldl (\symTab param ->
+  foldl (\symTab (Tuple i paramId) ->
           insertLocal symTab
-          (VariableEntry { id : param
-                         , loc : Register 0
+          (VariableEntry { id : paramId
+                         , loc : paramToLoc i
                          }))
   symTab
-  params
+  (List.mapWithIndex (\i a -> Tuple i a) params)
 
 generateFun :: SymTab
             -> FunDef
@@ -624,7 +603,7 @@ def main () {
 let x = (1 + 1 + 1) + 1 + (1);
 let y = x + 10;
 let z = y + 10;
-#let w = f1(1);
+let w = f1(1);
 }
 
 """
