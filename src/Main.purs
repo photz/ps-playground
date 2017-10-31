@@ -351,6 +351,8 @@ generateExpr symTab dest locs (IdentExpr id) =
     Nothing -> Left ("identifier " <> id <> " undeclared in scope")
     Just (VariableEntry { id, loc }) ->
       Right ((InstrMove { source : Loc loc, dest : dest }) : Nil)
+    Just (FunctionEntry { id, params }) ->
+      Left $ id <> " is a function"
 
 generateExpr symTab dest (a : locs) (BinExpr lExpr OpAdd rExpr) = do
   lInstr <- (generateExpr symTab a locs lExpr)
@@ -363,7 +365,11 @@ generateExpr symTab dest _ (ConstExpr n) =
   Right ((InstrMove { source : Constant n, dest : dest }) : Nil)
 
 
-generateExpr symTab dest _ (FunCall id args) = Left "not yet implemented"
+generateExpr symTab _ _ (FunCall id _) | hasFunction symTab id =
+  Left "function calls not yet implemented"
+  
+generateExpr _ _ _ (FunCall id _) =
+  Left $ "a definition of a function " <> id <> " not found"
 
 generateExpr symTab dest _ _ = Left "not yet implemented"
 
@@ -400,6 +406,9 @@ generateStmt symTab (Assignment id expr) stackIdx =
         Left e -> Left e
         Right instructions ->
           Right (StmtRecord instructions symTab stackIdx)
+    Just (FunctionEntry { id, params }) ->
+      Left (id <> " is a function and may not occur on the "
+            <> "lhs of an assignment")
   
 
 generateStmt symTab (ReturnStmt expr) stackIdx =
@@ -449,10 +458,21 @@ instrToGas (InstrPop { dest }) =
 
 data SymTab = SymTab (M.StrMap SymTabEntry)
 
-data SymTabEntry = VariableEntry { id :: String, loc :: Location }
+data SymTabEntry = VariableEntry { id :: String
+                                 , loc :: Location
+                                 }
+                 | FunctionEntry { id :: String
+                                 , params :: List String
+                                 }
 
 newSymTab :: SymTab
 newSymTab = SymTab M.empty
+
+hasFunction :: SymTab -> String -> Boolean
+hasFunction symTab@(SymTab m) id =
+  case M.lookup id m of
+    Just (FunctionEntry _) -> true
+    _ -> false
 
 hasLocal :: SymTab -> String -> Boolean
 hasLocal (SymTab s) id = M.member id s
@@ -466,7 +486,7 @@ insertLocal :: SymTab
 insertLocal (SymTab s) entry = case entry of
   VariableEntry { id, loc } ->
     SymTab (M.insert id entry s)
-
+  _ -> SymTab s
 
 
 data StackIdx = StackIdx Int
@@ -508,6 +528,14 @@ paramToLoc 4 = Register 3 -- "r8"
 paramToLoc 5 = Register 9 --  "r9"
 paramToLoc _ = Register 9999999 -- use turn this into a maybe
 
+-- | Creates a global symbol table with an entry for each function
+globalSymTab :: List FunDef -> SymTab
+globalSymTab xs = foldl ins newSymTab xs
+  where
+    ins :: SymTab -> FunDef -> SymTab
+    ins (SymTab symTab) (FunDef id params _) =
+      SymTab (M.insert id (FunctionEntry { id, params }) symTab)
+
 addParams :: List String -> SymTab -> SymTab
 addParams params symTab =
   foldl (\symTab (Tuple i paramId) ->
@@ -547,9 +575,9 @@ let w = f1(1);
 
 """
 
-gen :: FunDef -> Either String String
-gen x@(FunDef id params _) = do
-  instructions <- generateFun newSymTab x
+gen :: SymTab -> FunDef -> Either String String
+gen symTab x@(FunDef id params _) = do
+  instructions <- generateFun symTab x
   pure ("\t.globl " <> id <> "\n"
         <> "\t.type " <> id <> ", @function\n"
         <> id <> ":\n"
@@ -557,9 +585,9 @@ gen x@(FunDef id params _) = do
 
         
 
-genProg :: List FunDef -> Either String String
-genProg xs = do
-  funcDefs <- g (map gen xs) Nil
+generateProg :: List FunDef -> Either String String
+generateProg xs = do
+  funcDefs <- g (map (gen symTab) xs) Nil
   pure ("\t.file \"nothing\"\n"
         <> "\t.text\n"
         <> (foldl (\a b -> a <> "\n" <> b) "" funcDefs))
@@ -572,6 +600,9 @@ genProg xs = do
     g ((Right x) : xs) ys = g xs (x : ys)
     g ((Left x) : _) _ = Left x
 
+    symTab :: SymTab
+    symTab = globalSymTab xs
+
 
 main :: forall e. Eff (console :: CONSOLE | e) Unit
 main = do
@@ -582,7 +613,7 @@ main = do
 
             (show res)
 
-            <> case genProg res of
+            <> case generateProg res of
               Left e -> e
               Right p -> p)
     where
