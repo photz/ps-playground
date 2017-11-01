@@ -6,7 +6,7 @@ import Data.Array (null)
 import Data.Array.Partial (tail)
 import Data.Either
 import Data.Foldable (foldl)
-import Data.List (List(..), filter, head, snoc, concatMap, reverse, concat)
+import Data.List (List(..), filter, head, snoc, concatMap, reverse, concat, length)
 import Data.List as Data.List
 import Data.List.Types (List(..), (:))
 import Data.Maybe (Maybe(..))
@@ -364,14 +364,41 @@ generateExpr symTab dest (a : locs) (BinExpr lExpr OpAdd rExpr) = do
 generateExpr symTab dest _ (ConstExpr n) =
   Right ((InstrMove { source : Constant n, dest : dest }) : Nil)
 
+generateExpr symTab _ _ (FunCall id args) =
+  case getLocal symTab id of
+    Nothing -> Left $ "no function with name " <> id <> " found"
+    Just (VariableEntry { id, loc }) ->
+      Left $ id <> " is a variable and cannot be called"
+    Just (FunctionEntry { id, params }) ->
+      case id == "main" of
+        true ->
+          Left "The main function cannot be called"
+        false ->
+          case length args == length params of
+            false ->
+              Left ("function " <> id <> " expects "
+                    <> (show $ length params)
+                    <> " arguments, but "
+                    <> (show $ length args)
+                    <> " were supplied")
+            true ->
+              case listEither $ List.mapWithIndex (\i arg -> generateExpr symTab (paramToLoc i) registers arg) args of
+                Left e -> Left e
+                Right instructions ->
+                  Right $ (snoc (concat instructions)
+                           (InstrCall id))
 
-generateExpr symTab _ _ (FunCall id _) | hasFunction symTab id =
-  Left "function calls not yet implemented"
-  
-generateExpr _ _ _ (FunCall id _) =
-  Left $ "a definition of a function " <> id <> " not found"
+
+                
 
 generateExpr symTab dest _ _ = Left "not yet implemented"
+
+listEither :: forall a b. List (Either a b) -> Either a (List b)
+listEither xs = f xs Nil
+  where
+    f Nil ys = Right ys
+    f ((Right x) : xs) ys = f xs (x : ys)
+    f ((Left x) : xs) ys = Left x
 
 data StmtRecord = StmtRecord (List Instruction) SymTab StackIdx
 
@@ -426,6 +453,7 @@ data Instruction = InstrMove { source :: Data
                             , factor2 :: Data
                             }
                  | InstrRet
+                 | InstrCall String
 
 
 instance showInstruction :: Show Instruction where
@@ -441,6 +469,8 @@ instance showInstruction :: Show Instruction where
     "ret"
   show (InstrPop { dest }) =
     "pop"
+  show (InstrCall id) =
+    "call"
 
 instrToGas :: Instruction -> String
 instrToGas (InstrMove { source, dest }) =
@@ -455,6 +485,8 @@ instrToGas InstrRet =
   "\tret"
 instrToGas (InstrPop { dest }) =
   "\tpop " <> (locToGas dest)
+instrToGas (InstrCall id) =
+  "\tcall " <> id
 
 data SymTab = SymTab (M.StrMap SymTabEntry)
 
@@ -473,6 +505,17 @@ hasFunction symTab@(SymTab m) id =
   case M.lookup id m of
     Just (FunctionEntry _) -> true
     _ -> false
+
+-- | Returns a boolean indicating if the program has a main function
+hasMain :: SymTab -> Boolean
+hasMain (SymTab m) =
+  case M.lookup "main" m of
+    Just _ -> true
+    _ -> false
+
+isMain :: FunDef -> Boolean
+isMain (FunDef id _ _) = id == "main"
+
 
 hasLocal :: SymTab -> String -> Boolean
 hasLocal (SymTab s) id = M.member id s
@@ -562,15 +605,27 @@ generateFun symTab (FunDef id params stmts) = do
 test :: String
 test = """
 
+def f3 (x, y, z) {
+
+}
+
+def f2 (b) {
+#let x = f1(1,2,3,4,5);
+let x = f1(101);
+}
+
 def f1 (a) {
 a = 0;
+return a;
 }
 
 def main () {
 let x = (1 + 1 + 1) + 1 + (1);
 let y = x + 10;
 let z = y + 10;
+return 0;
 let w = f1(1);
+w = f3(101+1,102,103);
 }
 
 """
@@ -586,9 +641,12 @@ gen symTab x@(FunDef id params _) = do
         
 
 generateProg :: List FunDef -> Either String String
-generateProg xs = do
-  funcDefs <- g (map (gen symTab) xs) Nil
-  pure ("\t.file \"nothing\"\n"
+generateProg xs =
+  case hasMain symTab of
+    false -> Left "a main function must be defined"
+    true -> do
+      funcDefs <- g (map (gen symTab) xs) Nil
+      pure ("\t.file \"nothing\"\n"
         <> "\t.text\n"
         <> (foldl (\a b -> a <> "\n" <> b) "" funcDefs))
 
