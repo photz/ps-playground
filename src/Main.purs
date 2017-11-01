@@ -23,12 +23,21 @@ import Data.List as List
 import Syntax
 import Token (Token)
 import Token as Token
-import Tokenizer (tokenize)
-import Parser
+import Tokenizer (tokenize) as Tokenizer
+import Parser (parseFunDefList) as Parser
 
 registers :: List Location
 registers =
-  (Register 1) : (Register 2) : (Register 3) : (Register 4) : Nil
+  (Register 1)
+  : (Register 2)
+  : (Register 3)
+  : (Register 4)
+  : (Register 5)
+  : (Register 6)
+  : (Register 7)
+  : (Register 8)
+  : (Register 9)
+  : Nil
 
 data Location = StackIndex StackIdx
               | StackPointer
@@ -106,7 +115,7 @@ generateExpr symTab _ _ (FunCall id args) =
     Just (VariableEntry { id, loc }) ->
       Left $ id <> " is a variable and cannot be called"
     Just (FunctionEntry { id, params }) ->
-      case id == "main" of
+      case "main" == id of
         true ->
           Left "The main function cannot be called"
         false ->
@@ -123,9 +132,6 @@ generateExpr symTab _ _ (FunCall id args) =
                 Right instructions ->
                   Right $ (snoc (concat instructions)
                            (InstrCall id))
-
-
-                
 
 generateExpr symTab dest _ _ = Left "not yet implemented"
 
@@ -150,8 +156,13 @@ generateStmt symTab (VarDecl id expr) stackIdx | not $ hasLocal symTab id =
         Left e -> Left e
         Right instructions ->
           Right (StmtRecord
-                 (snoc instructions
-                  (InstrMove { source : Loc head, dest : StackIndex stackIdx }))
+                 (snoc
+                  (snoc instructions
+                   (InstrSub { source : Constant (-8)
+                             , dest : StackPointer
+                             }))
+                  (InstrMove { source : Loc head
+                             , dest : StackIndex stackIdx }))
                   
                  (insertLocal symTab
                   (VariableEntry { id : id, loc : StackIndex stackIdx }))
@@ -185,6 +196,9 @@ data Instruction = InstrMove { source :: Data
                  | InstrAdd { source :: Data
                             , dest :: Location
                             }
+                 | InstrSub { source :: Data
+                            , dest :: Location
+                            }
                  | InstrMul { factor1 :: Data
                             , factor2 :: Data
                             }
@@ -207,6 +221,7 @@ instance showInstruction :: Show Instruction where
     "pop"
   show (InstrCall id) =
     "call"
+  show (InstrSub _) = "sub"
 
 instrToGas :: Instruction -> String
 instrToGas (InstrMove { source, dest }) =
@@ -215,6 +230,8 @@ instrToGas (InstrPush { source }) =
   "\tpush " <> (dataToGas source)
 instrToGas (InstrAdd { source, dest }) =
   "\tadd " <> (dataToGas source) <> ", " <> (locToGas dest)
+instrToGas (InstrSub { source, dest }) =
+  "\tsub " <> (dataToGas source) <> ", " <> (locToGas dest)
 instrToGas (InstrMul { factor1, factor2 }) =
   "\tmul " <> (dataToGas factor1) <> ", " <> (dataToGas factor2)
 instrToGas InstrRet =
@@ -234,7 +251,9 @@ data SymTabEntry = VariableEntry { id :: String
                                  }
 
 newSymTab :: SymTab
-newSymTab = SymTab M.empty
+newSymTab = SymTab (M.insert "log"
+            (FunctionEntry { id : "log", params : "value" : Nil })
+            M.empty)
 
 hasFunction :: SymTab -> String -> Boolean
 hasFunction symTab@(SymTab m) id =
@@ -341,27 +360,16 @@ generateFun symTab (FunDef id params stmts) = do
 test :: String
 test = """
 
-def f3 (x, y, z) {
 
-}
-
-def f2 (b) {
-#let x = f1(1,2,3,4,5);
-let x = f1(101);
-}
-
-def f1 (a) {
-a = 0;
-return a;
+def f1 (yolo) {
+ let booom = log(yolo + 100);
 }
 
 def main () {
-let x = (1 + 1 + 1) + 1 + (1);
-let y = x + 10;
-let z = y + 10;
-return 0;
-let w = f1(1);
-w = f3(101,102,103);
+let a = 2 + 2;
+let b = 2 + a;
+let fuckinghell = f1(a);
+
 }
 
 """
@@ -369,8 +377,9 @@ w = f3(101,102,103);
 gen :: SymTab -> FunDef -> Either String String
 gen symTab x@(FunDef id params _) = do
   instructions <- generateFun symTab x
-  pure ("\t.globl " <> id <> "\n"
+  pure (""
         <> "\t.type " <> id <> ", @function\n"
+        <> "\t.globl " <> id <> "\n"
         <> id <> ":\n"
         <> (((foldl (\a b -> a <> "\n" <> b) "") <<< (map instrToGas)) instructions))
 
@@ -384,6 +393,16 @@ generateProg xs =
       funcDefs <- g (map (gen symTab) xs) Nil
       pure ("\t.file \"nothing\"\n"
         <> "\t.text\n"
+        <> ".LC0:\n"
+        <> "\t.string \"%ld\\n\"\n"
+        <> "log:"
+        <> "\tpush %rbp\n"
+        <> "\tmov %rsp, %rbp\n"
+        <> "\tmov %rdi, %rsi\n"
+        <> "\tmovl $.LC0, %edi\n"
+        <> "\tmovl $0, %eax\n"
+        <> "\tcall printf\n"
+        <> "\tret\n"
         <> (foldl (\a b -> a <> "\n" <> b) "" funcDefs))
 
   where
@@ -405,22 +424,17 @@ evalExpr (BinExpr l OpAdd r) = (evalExpr l) + (evalExpr r)
 evalExpr (BinExpr l OpSub r) = (evalExpr l) + (evalExpr r)
 evalExpr _ = 0
 
+build :: String -> Either String String
+build source = do
+  tokens <- Right $ Tokenizer.tokenize source
+  Tuple funDefs _ <- Parser.parseFunDefList tokens
+  prog <- generateProg funDefs
+  pure prog
 
 main :: forall e. Eff (console :: CONSOLE | e) Unit
 main = do
-  log (case parseFunDefList tokensList of
-          Left e ->
-            "error while parsing: " <> e <> "\n" <> (show tokensList)
-          Right (Tuple res _) ->
-
-            (show res)
-
-            <> case generateProg res of
-              Left e -> e
-              Right p -> p)
-    where
-      tokensList = tokenize test
-      funDefList = parseFunDefList tokensList
-
-
-
+  log $ case build test of
+    Left e ->
+      "Error: " <> e
+    Right prog ->
+      prog
