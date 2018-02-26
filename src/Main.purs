@@ -39,6 +39,12 @@ registers =
   : (Register 9)
   : Nil
 
+backupRegs :: List Location -> List Instruction
+backupRegs xs = map (\l -> InstrPush { source : Loc l }) xs
+
+restoreRegs :: List Location -> List Instruction
+restoreRegs xs = map (\l -> InstrPop { dest : l }) xs
+
 data Location = StackIndex StackIdx
               | StackPointer
               | BasePointer
@@ -130,8 +136,12 @@ generateExpr symTab _ _ (FunCall id args) =
               case listEither $ List.mapWithIndex (\i arg -> generateExpr symTab (paramToLoc i) registers arg) args of
                 Left e -> Left e
                 Right instructions ->
-                  Right $ (snoc (concat instructions)
-                           (InstrCall id))
+                  Right $ concat ((backupRegs registers)
+                                  : (concat instructions)
+                                  : (Data.List.singleton
+                                     (InstrCall id))
+                                  : (restoreRegs registers)
+                                  : Nil)
 
 generateExpr symTab dest _ _ = Left "not yet implemented"
 
@@ -182,8 +192,17 @@ generateStmt symTab (Assignment id expr) stackIdx =
           Right (StmtRecord instructions symTab stackIdx)
     Just (FunctionEntry { id, params }) ->
       Left (id <> " is a function and may not occur on the "
-            <> "lhs of an assignment")
+            <> " lhs of an assignment")
   
+generateStmt symTab (ExprStmt expr) stackIdx =
+  case Data.List.uncons registers of
+    Nothing -> Left "no available registers"
+    Just { head, tail } ->
+      case generateExpr symTab head tail expr of
+        Left e -> Left e
+        Right instructions ->
+          Right $ StmtRecord instructions symTab stackIdx
+
 
 generateStmt symTab (ReturnStmt expr) stackIdx =
   Right (StmtRecord (InstrRet : Nil) symTab stackIdx)
@@ -360,16 +379,14 @@ generateFun symTab (FunDef id params stmts) = do
 test :: String
 test = """
 
-
-def f1 (yolo) {
- let booom = log(yolo + 100);
+def f1(a, b) {
+  log(a + b);
 }
 
 def main () {
-let a = 2 + 2;
-let b = 2 + a;
-let fuckinghell = f1(a);
-
+  let a = 2 + 3 + 4;
+  let b = 10;
+  f1(a, b);
 }
 
 """
@@ -402,6 +419,7 @@ generateProg xs =
         <> "\tmovl $.LC0, %edi\n"
         <> "\tmovl $0, %eax\n"
         <> "\tcall printf\n"
+        <> "\tpopq %rbp\n"
         <> "\tret\n"
         <> (foldl (\a b -> a <> "\n" <> b) "" funcDefs))
 

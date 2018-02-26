@@ -25,8 +25,10 @@ instance showExpr :: Show Expr where
 data Stmt = Assignment String Expr
           | VarDecl String Expr
           | ReturnStmt Expr
+          | ExprStmt Expr
 
 instance showStmt :: Show Stmt where
   show (Assignment id expr) = "Assignment " <> id <> " " <> (show expr)
   show (VarDecl id expr) = "Variable decl " <> id <> " " <> (show expr)
   show (ReturnStmt expr) = "Return " <> (show expr)
+  show (ExprStmt expr) = "ExprStmt"

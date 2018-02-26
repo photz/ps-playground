@@ -109,6 +109,15 @@ parseStmt (Token.Return : xs) =
     _ ->
       Left "expecting a semicolon after return statement"
 
+parseStmt xs@((Token.Ident _) : Token.LeftPar : _) =
+  case parseExpr xs of
+    Left e -> Left e
+    Right (Tuple expr (Token.Semi : restTokens)) ->
+      Right (Tuple (ExprStmt expr) restTokens)
+    _ ->
+      Left "expected semicolon at the end of statement"
+
+
 parseStmt _ =
   Left "a statement must begin with an identifier or a let kw"
 
